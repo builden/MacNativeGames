@@ -17,7 +17,7 @@ void runtime_gpu_path_probe(const char *which) {
         !strcmp(which, "probe-gpu-vertex-streams") ? "active vertex streams match production descriptors: unused poison bindings, remapped streams, zero-input fallback, GPU pixel equivalence" :
         !strcmp(which, "probe-gpu-layer-merge") ? "layered passes over cube / array layers: face chains, clears and lower layers ending the pass, partial clear opening it, draws without a layer output, untouched layers preserved" :
         !strcmp(which, "probe-gpu-texture-retire") ? "descriptor/type views of re-uploaded textures retire after GPU completion; live views and type changes preserve pixels; finalized CPU-upload wrappers recycle after fences with complete pixel replacement" :
-        !strcmp(which, "probe-gpu-linear-rt") ? "CPU-loaded linear render targets; GPU readback across shared-page neighbour writes, genuine CPU texture edits, and memory pool reuse" :
+        !strcmp(which, "probe-gpu-linear-rt") ? "CPU-loaded linear render targets; GPU readback across shared-page neighbour writes, CPU edits, upload publication races, and memory pool reuse" :
         !strcmp(which, "probe-gpu-storage-view") ? "shared GPU texture content survives format/usage upgrades discovered inside active passes, across all mips and layers" :
         !strcmp(which, "probe-gpu-compressed-alias") ? "compressible storage changing format keeps the earlier format's content for its readers; same-format content persists; non-compressible storage still aliases" :
         !strcmp(which, "probe-gpu-upload-batch") ? "bounded texture-upload staging, retirement before game submit, cross-batch payload ordering" :

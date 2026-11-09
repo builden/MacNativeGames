@@ -3571,6 +3571,8 @@ static int tex_mirrored(const tex_t *t) {
     return 1;
 }
 static int tex_check_once(void) { static int v = -1; if (v < 0) { const char *e = getenv("TOTK_TEX_CHECK_ONCE"); v = !(e && !strcmp(e, "0")); if (!v) MLOG("TOTK_TEX_CHECK_ONCE=0：CPU 池贴图每次取用都查是否被改写（旧行为）"); } return v; }
+/* Writes after the upload snapshot must still be checked on the next use. */
+static void pkg_mark_uploaded(NvPkg *pk, uint64_t stamp) { pk->stamp = stamp; pk->seen = stamp; }
 static id<MTLTexture> tex_mtl(const tex_t *ct) {
     tex_t *t = (tex_t *)ct;
     if (!t || !t->serial) return nil;
@@ -3616,7 +3618,7 @@ static id<MTLTexture> tex_mtl(const tex_t *ct) {
             }
             TILELOG(t, "re-upload from the pool bytes");
             uint64_t st; reup_key nk; g_mip_nodrop = pk->owned; id<MTLTexture> nt = pkg_upload(t, &st, &nk); g_mip_nodrop = 0;   // 池内容变了（流式素材写进同一存储）：换新贴图，在途绘制仍读旧的 | Pool content changed (streamed assets written into the same storage): switch to a new texture; in-flight draws still read the old one
-            if (nt) { id<MTLTexture> old = pk->tex; pk->tex = nt; reup_retire(old, &pk->key); pk->key = nk; if (pk->hashed) pk->chash = h; ser_bump(t->serial); pk->stamp = st; pk->seen = nvn_dirty_now(); g_pkg_reuploads++; if (dirtycheck()) pk->hash = full_hash(t->mem, t->L.size); }
+            if (nt) { id<MTLTexture> old = pk->tex; pk->tex = nt; reup_retire(old, &pk->key); pk->key = nk; if (pk->hashed) pk->chash = h; ser_bump(t->serial); pkg_mark_uploaded(pk, st); g_pkg_reuploads++; if (dirtycheck()) pk->hash = full_hash(t->mem, t->L.size); }
             return pk->tex;
         }
         TILELOG(t, "first upload from the pool bytes");
@@ -3624,7 +3626,7 @@ static id<MTLTexture> tex_mtl(const tex_t *ct) {
         pk->lo = (uintptr_t)t->mem; pk->hi = pk->lo + t->L.size;
         pk->tex = pkg_upload(t, &pk->stamp, &pk->key);
         if (!pk->tex) return nil;
-        pk->seen = nvn_dirty_now(); g_pkg_uploads++; if (dirtycheck()) pk->hash = full_hash(t->mem, t->L.size);
+        pkg_mark_uploaded(pk, pk->stamp); g_pkg_uploads++; if (dirtycheck()) pk->hash = full_hash(t->mem, t->L.size);
         serial_put(t->serial, pk);
         pk->owned = gpu_owned(t->serial);   // after it is in the table: a later mark finds it there (pkg_owned_locked)
         if ((pk->hashed = pkg_hashed(t))) { pk->chash = pkg_hash(t->mem, t->L.size); pk->csub = g_sub_serial; }
@@ -13166,6 +13168,34 @@ int mtl_probe_compressed_alias(void) {
     return checked;
 }
 
+/* A CPU write after the upload snapshot must remain visible to the next GPU read. */
+static int probe_upload_write_during_publication(void) {
+    enum { W = 256, H = 64 }; size_t size = W * H;
+    uint8_t *mem = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (mem == MAP_FAILED) MDIE("upload publication probe mmap");
+    memset(mem, 0x11, size);
+    pool_t pool = {.mem = mem, .size = size, .flags = NVN_MEMORY_POOL_FLAGS_CPU_CACHED | NVN_MEMORY_POOL_FLAGS_GPU_CACHED};
+    tex_t t = {0}; t.serial = 0xfffffd20; t.pool = &pool; t.mem = mem;
+    t.d = (nvn_texdesc){.width = W, .height = H, .depth = 1, .levels = 1, .target = 1, .format = 1, .flags = NVN_TEXTURE_FLAGS_LINEAR};
+    nvn_tex_layout(&t.d, &t.L);
+    if (t.L.size != size) MDIE("upload publication probe layout");
+    mtl_pool_add(mem, size); nvn_dirty_add_range(mem, size);
+    op_hdr end = {OP_END, 8}; id<MTLBuffer> rb = probe_buf(W);
+    mtl_sub_begin(); mtl_exec((const uint8_t *)&end); (void)tex_mtl(&t); mtl_sub_commit(); mtl_finish();
+    NvPkg *pk = (__bridge NvPkg *)serial_ptr(t.serial);
+    if (!pk) MDIE("upload publication probe missing texture");
+    uint64_t stamp = pk->stamp;
+    dm_guest_write_prepare(mem, 1); mem[0] = 0x77;
+    if (!nvn_dirty_since(mem, size, stamp)) MDIE("upload publication probe did not record the CPU write");
+    /* The write landed after the upload snapshot, before the uploaded state was published. */
+    pkg_mark_uploaded(pk, stamp);
+    mtl_sub_begin(); mtl_exec((const uint8_t *)&end); id<MTLTexture> tex = tex_mtl(&t);
+    enc_b_copy_texture_buffer(blit(), tex, 0, 0, MTLOriginMake(0, 0, 0), MTLSizeMake(W, 1, 1), rb, 0, W, W);
+    mtl_sub_commit(); mtl_finish();
+    if (((uint8_t *)rb.contents)[0] != 0x77) MDIE("upload publication lost a concurrent CPU write");
+    mtl_tex_release(&t); mtl_pool_del(mem); nvn_dirty_remove_range(mem); mtl_finish(); res_remove(rb); munmap(mem, size);
+    return 1;
+}
 /* CPU-visible linear-render-target textures contain ordinary pool data until the GPU writes them.
    Exercise both water-height formats, cold sampling, a CPU texel update, and subsequent GPU rendering. */
 static int probe_readback_shared_page(void) {
@@ -13236,7 +13266,7 @@ int mtl_probe_linear_rt_upload(void) {
         for(NSUInteger i=0;i<W*H*bpp/2;i++){int want=expected[mode?i%4:0];if(abs((int)got[i]-want)>1)MDIE("linear-rt GPU render mode%d component%lu: %u != %d",mode,i,got[i],want);checked++;}
         memset(&R,0,sizeof R);mtl_tex_release(&t);mtl_pool_del(mem);nvn_dirty_remove_range(mem);mtl_finish();res_remove(rb);munmap(mem,size);free(pixels);
     }
-    return checked + probe_readback_shared_page();
+    return checked + probe_readback_shared_page() + probe_upload_write_during_publication();
 }
 
 /* Reproduce unused descriptor slots holding the old texture after streaming replaces its storage. */
