@@ -11,6 +11,9 @@
                                                              one turns the other off (user 2026-10-25, not to mislead)
      frame interpolation  off / 30+30 / 40+40 / 50+50 /      runtime flag mfx_interp (gfx/nvn/totk_mfx.m)
                           unlimited
+     GPU keep-alive       switch, default on                 dm_gfx_keepalive_set (gfx/nvn/nvn_mtl.m), at once;
+                                                             gpu-keepalive.txt above the game's folder (both games);
+                                                             TOTK_GPU_KEEPALIVE first (greyed out)
      resolution           720p / + MetalFX / 1080p /         runtime_output_mode_set (game_patches*.c); the player picks,
                           + MetalFX / 2K /
                           2K + MetalFX (a 4K screen)
@@ -104,17 +107,17 @@
    Update (PR #1404; user 2026-10-31): the version, and that it is the newest or each newer commit's message; an Update
    button that closes the game, updates the app from its checkout and opens it again, or why it cannot and how to update
    the code and build again by hand (update_tab.h, app/auto_update.h).
-   On the display page, at the right of the bottom line, two buttons (user 2026-10-25): contribute the shaders and pipelines
-   the shared list lacks (sent with gh in the background when it is signed in, as the launcher's reminder does; else the
-   GitHub form opens and Finder shows the file), and star the project (its GitHub page); their results show for a few
-   seconds where the version is.
+   着色器贡献 (user 2026-11-10, contrib_tab.h): how many shaders were contributed and how many new ones were found, and one
+   big switch, "Contribute shaders automatically", the start-up question's choice (totk_contrib_upload.h). On the display page, at the
+   right of the bottom line, a button stars the project (its GitHub page); its note shows for a few seconds where the
+   version is.
    A setting this game or start cannot change shows its one value, greyed out. While the panel is open the game gets no
    keyboard, mouse or controller input (TOTKInputView, front_mouse_update and gamepad capture). The controls read their
    values again twice a second, so they always show what is in force. */
 #pragma once
 #include "totk_fps_limit.h"   /* totk_fps_limits: the frame lock choices */
 #include "../third_party/d2r_gfx/gfx/nvn/totk_shader_contrib.h"   /* the contribution file, TOTK_REPO_URL */
-#include "contrib_submit.h"   /* gh_path, contrib_submit (shared with app/launcher.m) */
+#include "../third_party/d2r_gfx/gfx/nvn/totk_contrib_upload.h"   /* the shader inbox: the 着色器贡献 page (contrib_tab.h) */
 #include "aspect_math.h"     /* aspect_near, ASPECT_GAME */
 #include "../zeldaVR/runtime/vr_camera.h"   /* runtime_camera_distance_*: 1.4.3's camera hook, a default elsewhere */
 #include "keyboard_map.h"    /* the keyboard and mouse layout */
@@ -130,6 +133,7 @@
 void dm_gfx_set_flag(const char *name, int value);
 void dm_gfx_ssao_start(int pct); int dm_gfx_ssao_locked(void); int dm_gfx_ssao_live(void); void dm_gfx_ssao_set(int pct);   /* totk_ssao.h */
 void dm_gfx_aniso_start(int n); int dm_gfx_aniso_locked(void); int dm_gfx_aniso(void); void dm_gfx_aniso_set(int n);   /* gfx/nvn/nvn_mtl.m */
+void dm_gfx_keepalive_start(int on); int dm_gfx_keepalive_locked(void); int dm_gfx_keepalive(void); void dm_gfx_keepalive_set(int on);   /* gfx/nvn/nvn_mtl.m */
 #ifdef GAME_BOTW190
 int runtime_shadow_res_available(void); int runtime_shadow_res_locked(void); int runtime_shadow_res_saved(void);
 void runtime_shadow_res_save(int size);   /* game_patches_botw.c */
@@ -272,6 +276,7 @@ static void settings_restore_begin(void) {
  if(!getenv("TOTK_TAA")&&settings_read_int("graphics-taa.txt",&v)&&(v==0||v==1))taa_set(v);
  settings_ssao_restore();
  if(!dm_gfx_aniso_locked()&&settings_read_int("graphics-aniso.txt",&v)&&v<=16)dm_gfx_aniso_start(v);
+ if(!dm_gfx_keepalive_locked()&&runtime_shared_setting_word("gpu-keepalive.txt",word,sizeof word))dm_gfx_keepalive_start(!strncmp(word,"on",2));
  settings_effects_restore();
  const char *output=getenv("TOTK_OUTPUT_RES");
  if(
@@ -315,7 +320,7 @@ static void settings_restore_start(void) {
 
 /* The pages, in tab order. A page added here is counted in perPage (the panel height), given its tab, and its rows a
    SETTINGS_PAGE_* below. VR (zeldaVR) is last and only there while VR is on (settings_pages). */
-enum { SETTINGS_PAGE_DISPLAY, SETTINGS_PAGE_INPUT, SETTINGS_PAGE_USERS, SETTINGS_PAGE_EFFECTS, SETTINGS_PAGE_BINDINGS, SETTINGS_PAGE_UPDATE, SETTINGS_PAGE_VR, SETTINGS_PAGES };
+enum { SETTINGS_PAGE_DISPLAY, SETTINGS_PAGE_INPUT, SETTINGS_PAGE_USERS, SETTINGS_PAGE_EFFECTS, SETTINGS_PAGE_BINDINGS, SETTINGS_PAGE_UPDATE, SETTINGS_PAGE_CONTRIB, SETTINGS_PAGE_VR, SETTINGS_PAGES };
 int vr_enabled(void);   /* zeldaVR/gfx/totk_vr.m: a headset link was asked for (TOTK_VR_CONTROL) */
 static int settings_pages(void){return vr_enabled()?SETTINGS_PAGES:SETTINGS_PAGE_VR;}
 static void settings_refresh_all(void);
@@ -845,6 +850,13 @@ static NSArray<TOTKSettingRow *> *settings_rows(void) {
   @[@(MFX_OFF),@(MFX_30),@(MFX_40),@(MFX_50),@(MFX_60),@(MFX_MAX)],
   ^int{return mfx_requested();},^(int v){dm_gfx_set_flag("mfx_interp",v);if(v!=MFX_OFF)nvn_fps_lock_set(0);settings_save_frame();
    if(v!=MFX_OFF&&front_hdr_enabled())runtime_front_hdr_set(0);})];   /* interpolated frames are SDR: HDR goes off (PR #1129) */
+ /* GPU keep-alive (nvn_mtl.m keepalive_start): short spin kernels hold the GPU clock up between frames. A Mac whose GPU
+    keeps its clock with the game's own work gains no frame from it, only heat and power (an M4 Max: ~90 % GPU busy with it,
+    ~63 % without, the same frames), so the player can turn it off. */
+ {NSString *t=settings_text("GPU 保活（防降频，更热更耗电）","GPU keep-alive (holds the clock up; hotter, more power)");
+  if(dm_gfx_keepalive_locked())[rows addObject:settings_fixed(t,settings_on_off(dm_gfx_keepalive()))];
+  else [rows addObject:settings_row(t,nil,nil,^int{return dm_gfx_keepalive();},
+   ^(int v){dm_gfx_keepalive_set(v);runtime_shared_setting_save("gpu-keepalive.txt",v?"on":"off","GPU keep-alive");})];}
  int modes=runtime_output_modes();
  NSMutableArray<NSString *> *res=[NSMutableArray array];NSMutableArray<NSNumber *> *resModes=[NSMutableArray array];
  static const int order[]={OUTPUT_MODE_720P,OUTPUT_MODE_720P_METALFX,OUTPUT_MODE_OFF,OUTPUT_MODE_METALFX,OUTPUT_MODE_NATIVE,OUTPUT_MODE_NATIVE_METALFX,OUTPUT_MODE_NATIVE_4K,OUTPUT_MODE_NATIVE_5K,
@@ -1071,7 +1083,7 @@ static NSString *settings_pad_text(int action, const uint16_t *map, int family) 
 @property(strong) NSSegmentedControl *tabs;
 @property(strong) NSArray<NSView *> *pages;
 @property(strong) NSTextField *versionLabel;   /* the bottom-left corner */
-@property(strong) NSArray<NSButton *> *displayButtons;   /* the display page: contribute shaders, star the project */
+@property(strong) NSArray<NSButton *> *displayButtons;   /* the display page: star the project */
 @property(strong) NSArray<NSButton *> *userButtons;   /* the user page: add a user */
 @property(strong) NSArray<NSButton *> *resetButtons;   /* the key bindings page: keyboard and mouse, controller */
 @property(strong) NSArray<NSButton *> *effectsButtons; /* the effects page: reset to defaults */
@@ -1110,6 +1122,7 @@ static NSString *settings_pad_text(int action, const uint16_t *map, int family) 
 @end
 
 #include "update_tab.h"   /* the 更新 page */
+#include "contrib_tab.h"   /* the 着色器贡献 page */
 
 /* Where the player dragged the panel (user 2026-10-25: it can be moved), as the fraction of the free room left and below
    it, so a new opening and a resized window keep the spot; -1 = centred. The page shown last opens again. */
@@ -1163,7 +1176,7 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
  title.textColor=NSColor.whiteColor;title.frame=NSMakeRect(18,h-38,300,24);[self addSubview:title];
  NSButton *close=[NSButton buttonWithTitle:@"✕" target:self action:@selector(close:)];close.bordered=NO;close.refusesFirstResponder=YES;
  close.font=[NSFont systemFontOfSize:15 weight:NSFontWeightBold];close.contentTintColor=NSColor.whiteColor;close.frame=NSMakeRect(W-40,h-40,28,28);[self addSubview:close];
- NSArray<NSString *> *tabNames=@[settings_text("画面","Display"),settings_text("输入","Input"),settings_text("用户","User"),settings_text("画面效果","Effects"),settings_text("按键设置","Key bindings"),settings_text("更新","Update")];
+ NSArray<NSString *> *tabNames=@[settings_text("画面","Display"),settings_text("输入","Input"),settings_text("用户","User"),settings_text("画面效果","Effects"),settings_text("按键设置","Key bindings"),settings_text("更新","Update"),settings_text("着色器贡献","Shaders")];
  if(vr_enabled())tabNames=[tabNames arrayByAddingObject:@"VR"];
  NSSegmentedControl *tabs=[NSSegmentedControl segmentedControlWithLabels:tabNames
   trackingMode:NSSegmentSwitchTrackingSelectOne target:self action:@selector(tabChanged:)];
@@ -1203,6 +1216,7 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
  NSRect bindingsFrame=NSMakeRect(0,SETTINGS_BOTTOM,W,body);
  NSView *bindings=drawings?[self drawingsPageWithFrame:bindingsFrame]:[self bindingsPageWithFrame:bindingsFrame];[self addSubview:bindings];[pages addObject:bindings];
  NSView *update=[self updatePageWithFrame:bindingsFrame];[self addSubview:update];[pages addObject:update];
+ NSView *contrib=[self contribPageWithFrame:bindingsFrame];[self addSubview:contrib];[pages addObject:contrib];   /* contrib_tab.h */
  if(vr_enabled())[pages addObject:rowPage(SETTINGS_PAGE_VR)];
  self.pages=pages;
  /* The bottom line: the version on the left (PR #1210; the overlay keeps it too, user 2026-10-25); the reset buttons on the right
@@ -1217,13 +1231,12 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
  for(NSButton *b in @[resetPad,resetKeys,toggle]){b.controlSize=NSControlSizeSmall;b.font=[NSFont systemFontOfSize:11];b.refusesFirstResponder=YES;[b sizeToFit];
   b.frame=NSMakeRect(0,5,b.frame.size.width,24);b.wantsLayer=YES;[self addSubview:b];}
  self.resetButtons=@[resetKeys,resetPad];self.listToggle=toggle;
- /* The display page's bottom right (user 2026-10-25, kept on the first page only): contribute the shaders and pipelines the
-    shared list lacks, and star the project. */
- NSButton *contrib=[NSButton buttonWithTitle:settings_text("贡献着色器和管线","Contribute shaders and pipelines") target:self action:@selector(contribute:)];
+ /* The display page's bottom right (user 2026-10-25, kept on the first page only): star the project. (Contributing is the
+    page's switch now, user 2026-11-10.) */
  NSButton *star=[NSButton buttonWithTitle:settings_text("⭐ 给作者点赞","⭐ Star the project") target:self action:@selector(star:)];
- for(NSButton *b in @[contrib,star]){b.controlSize=NSControlSizeSmall;b.font=[NSFont systemFontOfSize:11];b.refusesFirstResponder=YES;[b sizeToFit];
-  b.frame=NSMakeRect(0,5,b.frame.size.width,24);b.wantsLayer=YES;[self addSubview:b];}
- self.displayButtons=@[star,contrib];
+ star.controlSize=NSControlSizeSmall;star.font=[NSFont systemFontOfSize:11];star.refusesFirstResponder=YES;[star sizeToFit];
+ star.frame=NSMakeRect(0,5,star.frame.size.width,24);star.wantsLayer=YES;[self addSubview:star];
+ self.displayButtons=@[star];
  NSButton *resetEffects=[NSButton buttonWithTitle:settings_text("恢复默认","Reset to defaults") target:self action:@selector(resetEffects:)];
  resetEffects.controlSize=NSControlSizeSmall;resetEffects.font=[NSFont systemFontOfSize:11];resetEffects.refusesFirstResponder=YES;[resetEffects sizeToFit];
  resetEffects.frame=NSMakeRect(0,5,resetEffects.frame.size.width,24);resetEffects.wantsLayer=YES;[self addSubview:resetEffects];
@@ -1302,11 +1315,12 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
  for(TOTKSettingRow *r in self.allRows)if(r.page==page)[rows addObject:r];
  self.rows=rows;self.controllerIndex=0;
  if(page==SETTINGS_PAGE_UPDATE)[self showUpdatePage];   /* a check (update_tab.h) */
+ if(page==SETTINGS_PAGE_CONTRIB)[self refreshContribPage];   /* the number now, not at the next tick */
  [self layoutFooter];[self updateTargets];[self refreshBindings];
  [self.bindingsScroll.documentView scrollPoint:NSZeroPoint];   /* the list from its top (moving with a controller scrolls) */
  [self.window makeFirstResponder:self.window.contentView];   /* key 1 and Esc keep reaching the window */
 }
-/* The bottom right: on the display page contribute and star; on the key bindings page the list / drawings switch and the
+/* The bottom right: on the display page star; on the key bindings page the list / drawings switch and the
    reset of the device shown (both resets with the list). */
 -(void)layoutFooter{
  BOOL bindings=self.page==SETTINGS_PAGE_BINDINGS;
@@ -1331,25 +1345,6 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
 }
 /* The panel's note about a row: the tab of the page shown. */
 static void settings_footer_note(NSString *text, BOOL bad) { (void)bad; [settingsPanel note:text]; }
-/* The shaders and pipelines this game met that the shared list lacks (totk_shader_contrib.h): sent with gh off the main
-   thread, the issue then opened; without gh (or when it fails) the GitHub form opens and Finder shows the file to drag in. */
--(void)contribute:(NSButton *)button{
- NSString *path=totk_contrib_path();NSUInteger rows=path?totk_contrib_read(path).count:0;
- if(!rows){[self note:settings_text("现在没有要贡献的着色器和管线：公共清单里都有了","Nothing to contribute now: the shared list has them all")];return;}
- button.enabled=NO;[self note:[NSString stringWithFormat:@(TOTK_UI("正在提交 %lu 条着色器和管线…","Sending %lu shaders and pipelines…")),(unsigned long)rows]];
- __weak TOTKSettingsPanel *weak=self;
- dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
-  NSString *gh=gh_path(),*issue=gh?contrib_submit(gh,path,rows):nil;
-  dispatch_async(dispatch_get_main_queue(),^{
-   button.enabled=YES;
-   if(issue){   /* contrib_submit moved the rows sent to the done file: the launcher's reminder counts from here */
-    [weak note:[NSString stringWithFormat:@(TOTK_UI("已提交 %lu 条，谢谢你的贡献！","Sent %lu, thank you for contributing!")),(unsigned long)rows]];
-    [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:issue]];fprintf(stderr,"[totk] settings: contribution sent, %s\n",issue.UTF8String);return;}
-   [weak note:gh?settings_text("自动提交没成功：已打开提交页面，把访达里的文件拖进去","Sending did not work: drag the file Finder shows into the form")
-                           :settings_text("已打开提交页面：把访达里的文件拖进去","The form is open: drag the file Finder shows into it")];
-   [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@TOTK_CONTRIB_ISSUE_URL]];
-   [NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:path]]];});});
-}
 /* The effects page's reset: every row back to the game's own; the panel is made again so the titles say what is in force. */
 -(void)resetEffects:(id)sender{(void)sender;settings_effects_reset();dispatch_async(dispatch_get_main_queue(),^{settings_rebuild();});}
 /* The project's GitHub page, where the player stars it (as the launcher's star button). */
@@ -1376,6 +1371,7 @@ static void settings_footer_note(NSString *text, BOOL bad) { (void)bad; [setting
 -(void)updateTargets{
  [self.controllerTargets removeAllObjects];self.padOrder=@[];
  if(self.page==SETTINGS_PAGE_UPDATE)[self.controllerTargets addObjectsFromArray:self.updatePageTargets];
+ else if(self.page==SETTINGS_PAGE_CONTRIB)[self.controllerTargets addObjectsFromArray:[self contribPageTargets]];
  else if(self.page!=SETTINGS_PAGE_BINDINGS){for(TOTKSettingRow *r in self.rows)[self.controllerTargets addObject:r.control.superview];
   NSArray<NSButton *> *foot=self.page==SETTINGS_PAGE_DISPLAY?self.displayButtons:self.page==SETTINGS_PAGE_USERS?self.userButtons:@[];
   for(NSButton *b in foot.reverseObjectEnumerator)if(!b.hidden)[self.controllerTargets addObject:b];
@@ -1484,7 +1480,7 @@ static void settings_footer_note(NSString *text, BOOL bad) { (void)bad; [setting
   self.aaMethod=dm_gfx_aa_method();dispatch_async(dispatch_get_main_queue(),^{settings_aa_rebuild();});
  }
 #endif
- for(TOTKSettingRow *r in self.allRows)[r refresh];[self refreshBindings];if(self.page==SETTINGS_PAGE_UPDATE)[self refreshUpdateTargets];
+ for(TOTKSettingRow *r in self.allRows)[r refresh];[self refreshBindings];if(self.page==SETTINGS_PAGE_UPDATE)[self refreshUpdateTargets];if(self.page==SETTINGS_PAGE_CONTRIB)[self refreshContribPage];
 }
 -(void)refreshBindings{
  if(self.page!=SETTINGS_PAGE_BINDINGS)return;

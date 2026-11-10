@@ -112,11 +112,26 @@ TOOL_PATHS = ['/opt/homebrew/bin', '/usr/local/bin', str(Path(sys.executable).pa
 
 
 def contrib_folder():
-    """<clone>/shader-list-contribution (MNG_CONTRIB_FOLDER overrides): the one file players send, from the Mac and their
-    iPhones / iPads (app/launcher.m contrib_file, ios/tools/shader_contrib_watch.py). Made at build time if missing."""
+    """<clone>/shader-list-contribution (MNG_CONTRIB_FOLDER overrides): the Mac's contribution file (app/launcher.m
+    contrib_file), which the game contributes over HTTPS when the player lets it. Made at build time if missing."""
     folder = Path(os.environ.get('MNG_CONTRIB_FOLDER') or REPO / 'shader-list-contribution')
     folder.mkdir(parents=True, exist_ok=True)
     return folder
+
+
+# The Mac agent an iOS build installed until 2026-11-10 (ios/tools/shader_contrib_watch.py): while an iPhone / iPad was
+# connected it asked to send the device's shaders in a GitHub issue. The devices contribute over HTTPS on their own now
+# (totk_contrib_upload.h), and the script is gone, so a build takes the agent off.
+DEVICE_REMINDER_LABEL = 'org.macnativegames.totk.ios-shader-contrib'
+DEVICE_REMINDER = Path.home() / f'Library/LaunchAgents/{DEVICE_REMINDER_LABEL}.plist'
+
+
+def remove_device_reminder():
+    if not DEVICE_REMINDER.exists():
+        return
+    subprocess.run(['launchctl', 'bootout', f'gui/{os.getuid()}/{DEVICE_REMINDER_LABEL}'], capture_output=True)
+    DEVICE_REMINDER.unlink(missing_ok=True)
+    say('   removed the old Mac reminder for iPhone / iPad shader contributions: the devices contribute on their own now')
 
 
 # Nintendo's public ACID signing key (generation 0): a dump's main.npdm is genuine when this key verifies
@@ -1390,7 +1405,7 @@ def remove_tree(path):
     shutil.rmtree(path)
 
 
-def data_bundle(tree, version, logs, *, bundle_id=BUNDLE_ID):
+def data_bundle(tree, version, logs, *, bundle_id=BUNDLE_ID, display_version=None):
     """The RomFS image (16 GB) as a bundle of its own, signed once and kept in the work folder (build/data-bundles). The
     app carries a clone of it in Contents/Helpers, and the app's seal records only its signature: sealing the image
     inside the app hashed all 16 GB on every packaging (88 s on an M4 Mac mini, 2026-10-20), now only when the image
@@ -1427,7 +1442,7 @@ def data_bundle(tree, version, logs, *, bundle_id=BUNDLE_ID):
     import plistlib
     (tmp / 'Contents/Info.plist').write_bytes(plistlib.dumps(dict(
         CFBundleIdentifier=f'{bundle_id}.data.{version}', CFBundleName='Game data', CFBundlePackageType='BNDL',
-        CFBundleShortVersionString=VERSIONS[version]['display_version'], CFBundleVersion='1')))
+        CFBundleShortVersionString=display_version or VERSIONS[version]['display_version'], CFBundleVersion='1')))
     run(['codesign', '--force', '--sign', '-', tmp], logs / f'sign-data-{version}.log')
     # Checked once here, where the 16 GB are hashed anyway; an app carrying this bundle checks only its own seal (which
     # records this bundle's signature), not --deep (55 s on each packaging, 2026-10-21).
@@ -1521,12 +1536,12 @@ def library_game_data(game, version, base=None):
     return base / version
 
 
-def place_library_image(tree, game, version, base=None):
+def place_library_image(tree, game, version, base=None, *, expected_romfs=None):
     """--mac-game-data library: the RomFS image in library_game_data instead of the app, put there once per image (an APFS
     clone when the work folder is on the same volume, else a 16 GB copy). romfs.sha256 is written last, so the launcher
     never takes a half-copied image; the image is not hashed here (the extraction checked it against the pin, and the
     runtime checks it once more at its first start). Returns whether it was put there now."""
-    image, sha = tree / f'extracted/{version}/romfs/romfs.bin', VERSIONS[version]['romfs']['sha256']
+    image, sha = tree / f'extracted/{version}/romfs/romfs.bin', (expected_romfs or VERSIONS[version]['romfs'])['sha256']
     folder = library_game_data(game, version, base)
     target, mark = folder / 'romfs.bin', folder / 'romfs.sha256'
     try:
@@ -2223,17 +2238,36 @@ def record_ns2_device_build(tree, out, g, args):
     sources = [p for root in roots for p in (tree / root).rglob('*') if p.is_file() and p.suffix in suffixes]
     sources += [tree / 'Makefile', tree / 'ios/project.yml', tree / 'ios/project.generated.yml',
                 tree / 'prebuilt/ios-arm64/libtotk_xlate.a', tree / 'prebuilt/macos-arm64/totk_xlate']
+    if args.platform == 'macos':
+        import plistlib
+        app_info = plistlib.loads((out / 'Contents/Info.plist').read_bytes())
+        sources = [p for p in sources + [tree / 'build.py', tree / 'tools/build_shader_service.py',
+                   tree / 'tools/shader_pins.py', tree / 'tools/totk_xlate/publish_native.sh'] if p.is_file()]
+        outputs = [out / 'Contents/MacOS' / g['executable'], out / 'Contents/Info.plist',
+                   out / 'Contents/_CodeSignature/CodeResources']
+        outputs += list((tree / f'build/game-data/{v}').glob('*'))
+        outputs += list((tree / f'rewritten/{v}').glob('*.patched.bin'))
+        record = dict(schema=1, game=v, platform='macos', input=g['expected'],
+                      options=dict(nvn_depth_mode=g['depth_mode'], cpu_execution='static-arm64-native',
+                                   shader_chain=g['shader_chain'],
+                                   mac_game_data='library' if app_info.get('MNGGameDataFolder') else 'app',
+                                   game_data_folder=app_info.get('MNGGameDataFolder')),
+                      build_app_sha256=sha256(Path(__file__)),
+                      source_sha256={str(p.relative_to(tree)): sha256(p) for p in sorted(set(sources))},
+                      output_sha256={str(p): sha256(p) for p in sorted(outputs) if p.is_file()})
+        out.with_name(out.stem + '-build-record.json').write_text(json.dumps(record, indent=2) + '\n')
+        return
     seed = tree / f'build/shader-seed/{v}/seed-manifest.json'
     outputs = [p for p in out.rglob('*') if p.is_file()] if out.is_dir() else [out]
     outputs += [p for p in (tree / 'ios/Gen/modules').glob('*.bin')]
     outputs += [tree / 'ios/Gen/ios_embed.h', seed]
     device_seed = out.with_name(out.stem + '-shader-seed') if args.ios_game_data == 'documents' else tree / 'ios/Gen/totk/shader-seed'
     outputs += [p for p in device_seed.iterdir() if p.is_file()]
-    record = dict(schema=1, game=v, platform=args.platform, input=VERSIONS[v],
+    record = dict(schema=1, game=v, platform=args.platform, input=VERSIONS.get(v) or g['expected'],
                   options=dict(ios_game_data=args.ios_game_data, device_gpu=args.device_gpu or ['auto'],
                                nvn_depth_mode=g['depth_mode']),
                   build_app_sha256=sha256(Path(__file__)),
-                  source_sha256={str(p.relative_to(tree)): sha256(p) for p in sorted(sources)},
+                  source_sha256={str(p.relative_to(tree)): sha256(p) for p in sorted(sources) if p.is_file()},
                   output_sha256={str(p): sha256(p) for p in sorted(set(outputs))})
     icon_spec = g['folder'] / 'assets/app-icon.json'
     if icon_spec.is_file():
@@ -2251,6 +2285,8 @@ def main_ns2(args, dump):
         raise BuildError('a Switch 2 dump folder holds its update itself: leave out --update, --dlc and --mod')
     exefs = ns2_dump_exefs(dump)
     title = npdm_program_id(exefs / 'main.npdm') if (exefs / 'main.npdm').is_file() else None
+    if title == '0400486024DEC000':
+        return build_oot(args, dump)
     g = NS2.get(title or '')
     if not g:
         raise BuildError(f'{dump}: not a supported Switch 2 dump (title {title or "unknown"} in {exefs}); supported: '
@@ -2284,7 +2320,8 @@ def main_ns2(args, dump):
                 logs / f'output_res_overlay-{v}-{size}.log', cwd=tree, env=env)
     icon_spec = g['folder'] / 'assets/app-icon.json'
     if icon_spec.is_file():
-        run([py, 'scripts/extract_app_icon.py', '--source-spec', icon_spec, '--output', 'build/AppIcon.icns'],
+        # the work tree's Python: extract_app_icon imports extract_exefs, which needs cryptography (only in the venv)
+        run([tree / '.venv/bin/python', 'scripts/extract_app_icon.py', '--source-spec', icon_spec, '--output', 'build/AppIcon.icns'],
             logs / 'app_icon.log', cwd=tree, env=env)
     say('2/4 data and 4/4 binary: building the game binary, its tables and the launcher')
     step_binary(tree, None, None, {**env, 'SHADER_LIST': f'../{g["folder"].name}/assets/shader_list.tsv'}, logs, version=v)
@@ -2663,7 +2700,7 @@ def parse_args(argv):
                          'held is moved next to it as <version>.backup-<date>-<time>, not deleted. Without this flag '
                          'the build leaves the folder alone and prints the two commands that fill it by hand')
     ap.add_argument('--shader-cache', type=Path, help=argparse.SUPPRESS)   # removed: the seed comes from the game data and the shared list
-    ap.add_argument('--no-shader-reminder', action='store_true', help='iOS: do not install the Mac agent that asks, while an iPhone / iPad with the game is connected, to send the shaders the shared list lacks')
+    ap.add_argument('--no-shader-reminder', action='store_true', help='no longer used (2026-11-10: the devices contribute their shaders on their own); kept so older commands still run')
     ap.add_argument('--native-4k', action=argparse.BooleanOptionalAction, default=None,
                     help='Mac, Tears of the Kingdom 1.4.3 / 1.2.1 and Breath of the Wild: the settings panel also offers native 4K (a 3840x2160 canvas, UI and scene); the game then '
                          'reserves its swapchain and texture heaps for 4K (about 1.4 GiB more memory, whatever is shown). '
@@ -2680,8 +2717,22 @@ def parse_args(argv):
     return ap.parse_args(argv)
 
 
+def build_oot(args, source):
+    # OOT carries its own runtime, GPU backend, rewriter and build inputs.
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('oot_build', REPO / 'games/oot/build.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    out, tree, expected, shader_chain = module.build(args, source)
+    record_ns2_device_build(tree, out, dict(version='oot', expected=expected, folder=REPO / 'games/oot',
+                           executable='OcarinaOfTime', depth_mode='runtime-device-state',
+                           shader_chain=shader_chain), args)
+
+
 def main(argv):
     args = parse_args(argv)
+    if args.game.suffix.lower() == '.nup':
+        return build_oot(args, args.game.expanduser().resolve())
     if args.game.expanduser().is_dir():   # a Switch 2 dump folder
         return main_ns2(args, args.game.expanduser().resolve())
     if not args.keys:
@@ -2902,6 +2953,7 @@ def main(argv):
         step_shader_libs(tree, logs, version=version)
     step_binary(tree, game, keys, env, logs, version=version)
     say(f'4/4 app: assembling {out}')
+    remove_device_reminder()
     if device_app:
         if args.platform == 'ios':   # visionOS keeps the startup shaders only
             build_device_translator(tree, logs)
@@ -2910,16 +2962,6 @@ def main(argv):
              *(['--image-outside'] if args.ios_game_data == 'documents' else []),
              *[x for g in args.device_gpu or [] for x in ('--device-gpu', g)]], logs/'build-ipa.log', cwd=tree, env=env)
         say_device_pipelines(logs)
-        if not args.no_shader_reminder:
-            # The iOS app never asks during play; while the device is connected, this Mac asks to send the shaders the
-            # shared list lacks (ios/tools/shader_contrib_watch.py). Not essential: a failure only says so.
-            try:
-                run([py, 'ios/tools/shader_contrib_watch.py', 'install', '--store', contrib_folder()],   # in this clone, where players look
-                    logs/'shader-contrib-watch.log', cwd=tree, env=env)
-                say('   installed the Mac reminder for iPhone / iPad shader contributions (remove: python3 '
-                    'games/totk/ios/tools/shader_contrib_watch.py uninstall)')
-            except BuildError as e:
-                say(f'   the Mac reminder for iPhone / iPad shader contributions was not installed: {e}')
     else:
         step_app(tree, out, logs, version=version, game_data=args.mac_game_data, game_data_folder=game_data_folder,
                  native_5k=False if args.native_4k is False else args.native_5k)
