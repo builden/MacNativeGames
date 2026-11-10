@@ -2,6 +2,7 @@
    diagnostic save-copy sessions therefore keep independent settings too. */
 #import <Cocoa/Cocoa.h>
 #include "runtime.h"
+#include "../../common/users.h"
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <limits.h>
@@ -24,6 +25,7 @@ static void title_controls_load(void);
 static uint64_t title_map_buttons(uint64_t);
 static NSView *performanceView;
 static NSTimer *performanceTimer;
+static BOOL managingUsers;
 extern int fps_overlay_value(void);
 double runtime_title_drawable_scale(void);
 static NSString *build_description(void) {
@@ -164,6 +166,11 @@ static TomodachiSettings *settings;
     NSUInteger languageIndex=[languages indexOfObject:preferences[@"language"]?:@""];[language selectItemAtIndex:languageIndex==NSNotFound?0:languageIndex];
     NSTextField *hint=label(display,@"Language changes apply the next time you open the app.",182);hint.frame=NSMakeRect(14,182,530,24);hint.textColor=NSColor.secondaryLabelColor;
     hint=label(display,@"Performance quality reduces display pixels for a lighter GPU load.",146);hint.frame=NSMakeRect(14,146,530,24);hint.textColor=NSColor.secondaryLabelColor;
+    const char *user=getenv("MNG_USER_NAME");
+    NSString *userName=user&&*user?@(user):@"Local";
+    NSTextField *currentUser=label(display,[NSString stringWithFormat:@"Current user: %@",userName],112);currentUser.frame=NSMakeRect(14,112,520,24);
+    NSView *userRow=[self row:display title:@"Local users" y:68];
+    NSButton *manage=[NSButton buttonWithTitle:@"Manage Users…" target:self action:@selector(manageUsers:)];manage.frame=NSMakeRect(664,4,260,26);[userRow addSubview:manage];
     NSView *controls=pages[1];
     NSPopUpButton *type=[self popup:controls title:@"Controller type" items:@[@"Auto",@"Xbox",@"PlayStation",@"Switch"] y:332 action:@selector(controllerType:)];[type selectItemAtIndex:atomic_load(&titlePadType)];
     NSPopUpButton *buttons=[self popup:controls title:@"Controller face buttons" items:@[@"Default",@"Swap A/B and X/Y"] y:292 action:@selector(buttons:)];[buttons selectItemAtIndex:atomic_load(&swapButtons)];
@@ -199,6 +206,7 @@ static TomodachiSettings *settings;
 - (void)language:(NSPopUpButton *)sender { preferences[@"language"]=languages[sender.indexOfSelectedItem];save_preferences(); }
 - (void)buttons:(NSPopUpButton *)sender { preferences[@"swapButtons"]=@(sender.indexOfSelectedItem);atomic_store(&swapButtons,sender.indexOfSelectedItem);for(int i=0;i<4;i++)atomic_store(&titlePadMap[i],1u<<(sender.indexOfSelectedItem?(i^1):i));title_controls_save();[self.padDiagram setNeedsDisplay:YES]; }
 - (void)rumble:(NSButton *)sender { BOOL on=sender.state==NSControlStateValueOn;preferences[@"rumble"]=@(on);runtime_hid_feedback_flag("rumble",on);save_preferences(); }
+- (void)manageUsers:(id)sender { (void)sender;managingUsers=YES;mng_users_manage();managingUsers=NO;[gameWindow makeFirstResponder:self.panel]; }
 #include "settings_controls_ui.h"
 
 @end

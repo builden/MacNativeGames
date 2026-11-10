@@ -443,13 +443,14 @@ static void boot(void) {
 }
 /* Host aborts (e.g. Metal validation assertions) print the host call stack before the process ends. */
 #include <execinfo.h>
+#include "../../common/users.h"
 static void abort_report(int num) {
  (void)num;void *frames[64];int n=backtrace(frames,64);write(2,"[tomodachi] host abort, call stack:\n",sizeof("[tomodachi] host abort, call stack:\n")-1);backtrace_symbols_fd(frames,n,2);
  signal(SIGABRT,SIG_DFL);raise(SIGABRT);
 }
 int main(int argc,char **argv) {
  char *app_arguments[4];
- if(argc==1){extern char *runtime_title_app_configure(void);app_arguments[0]=argv[0];app_arguments[1]=runtime_title_app_configure();app_arguments[2]="boot";app_arguments[3]=NULL;argv=app_arguments;argc=3;}
+ if(argc==1){extern char *runtime_title_app_configure(void);app_arguments[0]=argv[0];app_arguments[1]=runtime_title_app_configure();if(!mng_users_select(getenv("TOTK_PROFILE_DIR")))return 0;app_arguments[2]="boot";app_arguments[3]=NULL;argv=app_arguments;argc=3;}
  need(argc==3,"usage: tomodachi-native rewritten-dir probe|boot");
  /* One game or GPU probe at a time (memory, GPU time): wait for the slot before anything is loaded. */
  if(!strcmp(argv[2],"boot")||!strncmp(argv[2],"probe-gpu",9))runtime_game_slot_acquire(argv[2]);

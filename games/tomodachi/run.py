@@ -29,7 +29,7 @@ def run(work, mode, seconds, app_pool_mib=None, backend="metal4"):
     tests.mkdir(exist_ok=True)
     session = Path(tempfile.mkdtemp(prefix=f"{mode}-", dir=tests))
     # Never inherit another game's save path, input script, patches or instrumentation.
-    environment = {k: v for k, v in os.environ.items() if not k.startswith(("TOTK_", "DM_"))}
+    environment = {k: v for k, v in os.environ.items() if not k.startswith(("TOTK_", "DM_", "MNG_"))}
     environment.update(TOTK_PROFILE_DIR=str(session / "profile"),
                        TOTK_ROMFS=str(prepared / "romfs"), TOTK_ROMFS_PATCHES="0",
                        TOTK_SLOT_OWNER="tomodachi-diagnostic",

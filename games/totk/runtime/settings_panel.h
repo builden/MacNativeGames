@@ -122,6 +122,7 @@
 #include "input_prompts.h"
 #include "feedback_settings.h"   /* feedback_word: ssao.txt */
 #include "users.h"           /* the local users (runtime/account.c): the User page */
+#include "../../common/users.h"
 #if defined(GAME_DKB) || defined(GAME_POKOPIA)
 #include "ns2_resolution.h"
 #endif
@@ -1228,7 +1229,7 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
  resetEffects.frame=NSMakeRect(0,5,resetEffects.frame.size.width,24);resetEffects.wantsLayer=YES;[self addSubview:resetEffects];
  self.effectsButtons=@[resetEffects];
  /* The user page's bottom right: name a new user in the game's text bar. */
- NSButton *addUser=[NSButton buttonWithTitle:settings_text("添加用户…","Add User…") target:self action:@selector(addUser:)];
+ NSButton *addUser=[NSButton buttonWithTitle:getenv("MNG_USERS_DIR")?settings_text("管理用户…","Manage Users…"):settings_text("添加用户…","Add User…") target:self action:@selector(addUser:)];
  addUser.controlSize=NSControlSizeSmall;addUser.font=[NSFont systemFontOfSize:11];addUser.refusesFirstResponder=YES;[addUser sizeToFit];
  addUser.frame=NSMakeRect(0,5,addUser.frame.size.width,24);addUser.wantsLayer=YES;[self addSubview:addUser];
  self.userButtons=@[addUser];
@@ -1358,6 +1359,7 @@ static void settings_footer_note(NSString *text, BOOL bad) { (void)bad; [setting
    game's own keyboards); the user is kept, and the panel comes back with the users read again. */
 -(void)addUser:(NSButton *)button{
  (void)button;settings_pointer_used();
+ if(getenv("MNG_USERS_DIR")){settings_show(0);mng_users_manage();settings_show(1);return;}
  __weak TOTKSettingsPanel *weak=self;
  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
   RuntimeTextRequest req={TOTK_UI("给新用户取名（最多 10 个字；回车确认，Esc 取消）","Name the new user (at most 10 characters; Return confirms, Escape cancels)"),"",10,1,0,0,0};

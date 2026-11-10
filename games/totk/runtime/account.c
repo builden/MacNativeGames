@@ -15,9 +15,14 @@ void hle_signal_system_event(void *event);
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <TargetConditionals.h>
+#if !TARGET_OS_IPHONE
+#include "../../common/users.h"
+#endif
 typedef struct{uint64_t lo,hi;} Uid;
 typedef struct{Uid uid;uint64_t token;} UserHandle;
 static Uid local;   /* the user this run opened with; runtime_users_choose never touches it */
+static RuntimeUser runningUser;
 static RuntimeUser users[RUNTIME_USERS_MAX];
 static int usersCount,usersActive;   /* usersActive: the user the next launch opens with */
 static char usersDir[4096];
@@ -32,7 +37,7 @@ static void lock_release(void){lock_owner=0;pthread_mutex_unlock(&lock_);check_g
 uint64_t runtime_account_lock_owner(void){const uint32_t *w=(const uint32_t *)(const void *)&guarded;fprintf(stderr,"[totk-dump] account lock with guards @%p:",(void *)&guarded);for(unsigned i=0;i<sizeof(guarded)/4;i++)fprintf(stderr," %08x",w[i]);fputc('\n',stderr);return lock_owner;}
 static uint64_t tokens[64],nextToken=1;
 
-static const RuntimeUser *user_of(const Uid *uid){for(int i=0;i<usersCount;i++)if(users[i].lo==uid->lo&&users[i].hi==uid->hi)return &users[i];return NULL;}
+static const RuntimeUser *user_of(const Uid *uid){if((local.lo||local.hi)&&uid->lo==local.lo&&uid->hi==local.hi)return &runningUser;for(int i=0;i<usersCount;i++)if(users[i].lo==uid->lo&&users[i].hi==uid->hi)return &users[i];return NULL;}
 static void hex32(char out[33],const RuntimeUser *u){snprintf(out,33,"%016llx%016llx",(unsigned long long)u->hi,(unsigned long long)u->lo);}
 /* 32 hex digits, high half first, the way hex32 (and the save directory's name, fs_host.c) write them. strtoull
    would take the whole digit run for one half, so each half is cut out and read on its own. */
@@ -94,6 +99,27 @@ static int users_file_load(void){
  }
  fclose(f);return marked;
 }
+#if !TARGET_OS_IPHONE
+/* Keep Zelda's per-game users.txt usable by save_manager.py while sharing names and new IDs. */
+static void merge_shared_users(void){
+ if(!getenv("MNG_USERS_DIR"))return;
+ MngUser shared[MNG_USERS_MAX];int count=mng_users_list(shared,MNG_USERS_MAX),changed=0;
+ if(count<1)runtime_fail("cannot read shared local users");
+ RuntimeUser previous[RUNTIME_USERS_MAX],next=users[usersActive];int previousCount=usersCount;
+ memcpy(previous,users,sizeof previous);
+ RuntimeUser merged[RUNTIME_USERS_MAX]={0};merged[0]=previous[0];int mergedCount=1,nextIndex=0;
+ for(int i=1;i<count;i++){
+  Uid uid;if(!parse32(shared[i].id,&uid))runtime_fail("invalid shared local user");
+  if(uid.lo==merged[0].lo&&uid.hi==merged[0].hi)runtime_fail("shared user conflicts with this game's default identity");
+  RuntimeUser *u=&merged[mergedCount++];u->lo=uid.lo;u->hi=uid.hi;snprintf(u->name,sizeof u->name,"%s",shared[i].name);
+  if(next.lo==uid.lo&&next.hi==uid.hi)nextIndex=mergedCount-1;
+ }
+ if(mergedCount!=previousCount||nextIndex!=usersActive)changed=1;
+ for(int i=0;i<mergedCount&&!changed;i++)if(merged[i].lo!=previous[i].lo||merged[i].hi!=previous[i].hi||strcmp(merged[i].name,previous[i].name))changed=1;
+ memcpy(users,merged,sizeof users);usersCount=mergedCount;usersActive=nextIndex;
+ if(changed)users_file_save();
+}
+#endif
 static void initialize(void){
  lock_acquire();if(local.lo||local.hi){lock_release();return;}
  const char *dir=getenv("TOTK_PROFILE_DIR");if(!dir)dir="user-data";
@@ -124,7 +150,20 @@ static void initialize(void){
  }
 loaded:
  usersActive=marked>=0?marked:0;
+#if !TARGET_OS_IPHONE
+ merge_shared_users();
+ const char *selected=getenv("MNG_USER_ID");
+ if(selected&&*selected){
+  int pick=0;
+  if(strcmp(selected,"default")){
+   Uid uid;if(!parse32(selected,&uid))runtime_fail("invalid selected user");
+   const RuntimeUser *u=user_of(&uid);if(!u)runtime_fail("selected user missing");pick=(int)(u-users);
+  }
+  if(pick!=usersActive){usersActive=pick;users_file_save();}
+ }
+#endif
  local.lo=users[usersActive].lo;local.hi=users[usersActive].hi;
+ runningUser=users[usersActive];
  lock_release();
  fprintf(stderr,"[totk] %d local user(s), \"%s\" in force\n",usersCount,users[usersActive].name);
 }
@@ -140,7 +179,11 @@ void runtime_account_uid(uint64_t out[2]){initialize();out[0]=local.lo;out[1]=lo
 /* ---------- the settings panel's User page (runtime/users.h) ---------- */
 int runtime_users_get(RuntimeUser *out,int max){
  initialize();if(!out||max<0)return 0;
- lock_acquire();int n=0;for(int i=0;i<usersCount&&n<max;i++)out[n++]=users[i];lock_release();return n;
+ lock_acquire();
+#if !TARGET_OS_IPHONE
+ merge_shared_users();
+#endif
+ int n=0;for(int i=0;i<usersCount&&n<max;i++)out[n++]=users[i];lock_release();return n;
 }
 int runtime_users_active(RuntimeUser *out){   /* the user this run opened with (local), not the next launch's */
  initialize();if(!out)return -1;
@@ -153,9 +196,20 @@ int runtime_users_next(RuntimeUser *out){
 int runtime_users_add(const char *name){
  initialize();if(!name)return -1;
  lock_acquire();
+#if !TARGET_OS_IPHONE
+ merge_shared_users();
+#endif
+ if(usersCount>=RUNTIME_USERS_MAX){lock_release();return -1;}
  RuntimeUser *u=&users[usersCount];
- if(usersCount>=RUNTIME_USERS_MAX||!clean_name(u->name,name)){lock_release();return -1;}
- Uid uid;do{arc4random_buf(&uid,sizeof uid);}while((!uid.lo&&!uid.hi)||user_of(&uid));
+ if(!clean_name(u->name,name)){lock_release();return -1;}
+ Uid uid;
+#if !TARGET_OS_IPHONE
+ if(getenv("MNG_USERS_DIR")){
+  MngUser added;if(mng_users_add(u->name,&added)||!parse32(added.id,&uid)){lock_release();return -1;}
+  snprintf(u->name,sizeof u->name,"%s",added.name);
+ }else
+#endif
+ do{arc4random_buf(&uid,sizeof uid);}while((!uid.lo&&!uid.hi)||user_of(&uid));
  u->lo=uid.lo;u->hi=uid.hi;usersCount++;
  users_file_save();
  lock_release();

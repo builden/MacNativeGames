@@ -392,6 +392,7 @@ def prepare_work(work, py, logs):
     # their times, so nothing is rebuilt needlessly.
     sync = ['rsync', '-rlpD', '--checksum', *excludes]
     run([*sync, f'{GAME}/', f'{tree}/'], logs / 'sources.log')
+    run([*sync, f'{REPO / "games/common"}/', f'{work / "common"}/'], logs / 'sources-common.log')
     # zeldaVR's modules (games/totk/zeldaVR links to them in the repository): into the tree, where the Makefile and the
     # iOS project take them; VR stays off unless TOTK_VR_CONTROL is set
     run([*sync, f'{REPO / "zeldaVR"}/', f'{tree / "zeldaVR"}/'], logs / 'sources-zeldavr.log')

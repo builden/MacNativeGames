@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <string.h>
 _Noreturn void runtime_fail(const char *s){fprintf(stderr,"%s\n",s);exit(1);}
+void hle_bind_system_event(void *event,int autoclear){(void)event;(void)autoclear;}
+void hle_signal_system_event(void *event){(void)event;}
 typedef struct{uint64_t lo,hi;} Uid;
 typedef struct{Uid uid;uint64_t token;} Handle;
 int main(void){

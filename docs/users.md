@@ -1,45 +1,33 @@
-# Multiple users, one save area each
+# Shared local users
 
-As on a console, the game plays as one **user** at a time, and every user has their own save area. The users are
-managed in the settings panel (key 1, the **User** tab) on the Mac.
+On macOS, supported games use one local user list. Tomodachi Life and the native runtime builds for Tears of the Kingdom,
+Breath of the Wild, Donkey Kong Bananza, and Pokémon Pokopia are connected. Other games with separate runtimes are not
+connected yet; Animal Crossing: New Horizons has its own save behavior and is not part of this user list.
 
-## What a user is
+## Users and saves
 
-- A user is a 128-bit id and a name. The game's save area is the folder named after that id:
-  `<profile>/save/<32 hex digits>` (the profile is `~/Library/Application Support/MacNativeGames/TOTK/profile` for
-  Tears of the Kingdom). Another user's saves are in another folder, so switching users switches saves.
-- The name is what the game shows in its save screens (it asks the account system for it, as on a console).
-- At most **8 users**, as many as a console holds. The first one is named "Local".
+- The shared list is `~/Library/Application Support/MacNativeGames/Accounts/users.plist`.
+- There can be up to **8 active users**. The initial user is **Local** and cannot be removed.
+- New users have the same ID and name in connected games. **Local** keeps each game's existing identity so old saves
+  continue to open. This means the Local ID can differ by game.
+- Saves remain separate by game and user. Each title keeps its own profile and save data; sharing a user does not share
+  an island or save between games.
 
-## Choosing a user
+## Choosing and managing users
 
-As on a console, the user is chosen **before the game starts** — the "preselected user" the system opens for the
-game. Here that choice lives in the settings panel:
+- With one active user, a game starts without a chooser. With several, choose a user before launch. Zelda builds open
+  with the profile's saved choice; Tomodachi currently opens with **Local** selected.
+- The settings panel shows the user active for this run and opens the shared user manager. The running game keeps that
+  user until it exits; choosing another user takes effect on a later launch.
+- Add, remove, and restore users in the manager. Removing a user archives it from the active list; it does not delete
+  that user's saves, and the user can be restored later. The default Local user cannot be removed.
 
-- **User (from the next launch)** lists the users. Picking one takes effect the **next time the game starts**; the
-  game that is running keeps the user it opened with (its save area is already mounted, and switching mid-game
-  would mix two players' progress).
-- **User this run** shows the user the running game plays as (greyed out; it cannot change mid-run).
-- **Add User…** (bottom right) names a new user in the game's text bar — the panel closes while the bar is up and
-  comes back when the name is confirmed (Return) or cancelled (Escape). At most 10 characters, as on a console;
-  the name is trimmed and control characters are dropped.
+## Existing data and platform scope
 
-A user is never deleted by the game; their save folder stays until you remove it yourself (quit the game first).
+- On first access, the shared list imports additional users from existing Zelda `users.txt` files. Their game profiles
+  and saves remain in place. Zelda continues to maintain its per-game `users.txt` as a compatibility file for save tools.
+- A user's game save is not deleted when that user is archived.
+- The shared selector and manager are macOS features. The separate iOS account path is unchanged.
 
-## Where the users live
-
-- The store is `<profile>/users.txt`, one user per line: an optional `*` first marks the user the next launch
-  opens with, then 32 hex digits of id, a tab, and the name. It is written whole (a half-written store never
-  survives) and is recovered line by line when a line does not parse.
-- A profile from before the users (which only had the single identity file `account.uid`) keeps its identity as
-  the user "Local"; `account.uid` stays for older builds. A fresh profile does not write it.
-
-## Notes
-
-- The feature is the runtime's (runtime/account.c, runtime/users.h); the settings panel is Mac-only, so on
-  iPhone / iPad there is no way to switch users yet — the store itself works there (one user, "Local").
-- Each user's save area is a folder under `<profile>/save/` named after the user's id, so a copy of that folder
-  (a backup, `games/totk/scripts/save_manager.py`) carries every user; save_manager.py exports and imports the
-  user in force (the one users.txt marks).
-- Tested by `tests/test_users.c` (the store: migration, add / choose, restart, corrupt files) and the settings
-  panel probe (`tests/test_settings_panel.py`, the User page, including adding a user through the text bar).
+The shared store and per-game save mapping are exercised by `games/common/tests/test_users.py`. Tomodachi's settings
+test checks that the current user is shown in the panel.

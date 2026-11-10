@@ -49,6 +49,7 @@
  (void)sender;for(int i=0;i<CONTROLLER_BUTTONS;i++)atomic_store(&titlePadMap[i],i<16?1u<<i:0);atomic_store(&swapButtons,0);preferences[@"swapButtons"]=@NO;title_controls_save();[self.padDiagram setNeedsDisplay:YES];
 }
 - (void)controlsTick {
+ if(managingUsers)return;
  uint64_t buttons=atomic_load(&titlePadButtons),edges=buttons&~self.previousPad;self.previousPad=buttons;
  if(!atomic_load(&titlePadConnected))return;
  const uint64_t chord=(1ull<<4)|(1ull<<5);
@@ -71,14 +72,16 @@
   self.padDiagram.selected=[order[self.padIndex] intValue];[self.padDiagram setNeedsDisplay:YES];return;
  }
  NSArray *rows=self.tabs.selectedTabViewItem.view.subviews;NSMutableArray<NSControl *> *targets=[NSMutableArray array];
- for(NSView *row in rows)for(NSView *view in row.subviews)if([view isKindOfClass:NSPopUpButton.class]||[view isKindOfClass:NSSwitch.class])[targets addObject:(id)view];
+ for(NSView *row in rows)for(NSView *view in row.subviews)if([view isKindOfClass:NSPopUpButton.class]||[view isKindOfClass:NSSwitch.class]||[view isKindOfClass:NSButton.class])[targets addObject:(id)view];
  if(!targets.count)return;
  if(step&&direction<=2)self.padIndex=(self.padIndex+(direction==1?targets.count-1:1))%targets.count;
  self.padIndex%=targets.count;
  for(NSUInteger i=0;i<targets.count;i++){NSView *row=targets[i].superview;row.layer.borderWidth=i==(NSUInteger)self.padIndex?2:0;row.layer.borderColor=[NSColor colorWithRed:.7 green:.95 blue:.8 alpha:1].CGColor;}
  if((step&&direction>=3)||(edges&1)){
   NSControl *control=targets[self.padIndex];if([control isKindOfClass:NSPopUpButton.class]){NSPopUpButton *popup=(id)control;[popup selectItemAtIndex:(popup.indexOfSelectedItem+(direction==3?popup.numberOfItems-1:1))%popup.numberOfItems];}
-  else{NSSwitch *toggle=(id)control;toggle.state=!toggle.state;}[control sendAction:control.action to:control.target];
+  else if([control isKindOfClass:NSSwitch.class]){NSSwitch *toggle=(id)control;toggle.state=!toggle.state;}
+  else if(!(edges&1))return;
+  [control sendAction:control.action to:control.target];
  }
 }
 
@@ -91,6 +94,6 @@
  for(NSView *view in self.panel.subviews)if([view isKindOfClass:NSButton.class])view.frame=NSMakeRect(width-42,480,28,28);
  for(NSUInteger page=0;page<2;page++)for(NSView *row in self.tabs.tabViewItems[page].view.subviews)if(row.wantsLayer){
   NSRect frame=row.frame;frame.size.width=width-28;row.frame=frame;
-  for(NSView *control in row.subviews){NSRect r=control.frame;if([control isKindOfClass:NSPopUpButton.class])r.origin.x=width-296;else if([control isKindOfClass:NSSwitch.class])r.origin.x=width-78;else r.size.width=width-320;control.frame=r;}
+  for(NSView *control in row.subviews){NSRect r=control.frame;if([control isKindOfClass:NSPopUpButton.class]||[control isKindOfClass:NSButton.class])r.origin.x=width-296;else if([control isKindOfClass:NSSwitch.class])r.origin.x=width-78;else r.size.width=width-320;control.frame=r;}
  }
 }

@@ -2,6 +2,9 @@
 #include "runtime.h"
 #include "totk_ui_lang.h"
 #include <TargetConditionals.h>
+#if !TARGET_OS_IPHONE
+#include "../../common/users.h"
+#endif
 #include <dlfcn.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -622,7 +625,7 @@ int runtime_app_mode(void){return 0;}
 #endif
 int main(int argc,char **argv) {
 #if !TARGET_OS_IPHONE
- if(runtime_app_mode()){char **boot=NULL;int r=runtime_app_launch(argc,argv,&boot);if(r>=0)return r;argc=3;argv=boot;runtime_input_file_start();}
+ if(runtime_app_mode()){char **boot=NULL;int r=runtime_app_launch(argc,argv,&boot);if(r>=0)return r;if(!mng_users_select(getenv("TOTK_PROFILE_DIR")))return 0;argc=3;argv=boot;runtime_input_file_start();}
 #endif
  need(argc==3||(argc>3&&!strcmp(argv[2],"pipeline-archive"))||((argc==4||argc==5)&&!strcmp(argv[2],"seed-shaders")),"usage: totk-native rewritten-dir probe|boot (pipeline-archive <list>... | seed-shaders <corpus> [<shader list>])");
  /* One game or GPU probe at a time (memory, GPU time): wait for the slot before anything is loaded. */

@@ -34,7 +34,7 @@ int main(int argc,char **argv) { @autoreleasepool {
     NSDictionary *prefs=@{@"keys":keys,@"swapButtons":@YES,@"lowResolution":@YES,@"language":invalid?@"invalid":@"ja"};
     NSData *data=[NSJSONSerialization dataWithJSONObject:prefs options:0 error:nil];
     assert([data writeToFile:[folder stringByAppendingPathComponent:@"settings.json"] atomically:YES]);
-    setenv("TOTK_PROFILE_DIR",folder.fileSystemRepresentation,1);setenv("TOTK_LANG","en-US",1);
+    setenv("TOTK_PROFILE_DIR",folder.fileSystemRepresentation,1);setenv("TOTK_LANG","en-US",1);setenv("MNG_USER_NAME","Test Player",1);
     assert(runtime_title_map_buttons(0x1234)==0x1234); // no settings prepared in a headless start
     runtime_title_settings_prepare();
     assert(runtime_title_map_key(38)==(invalid?38:40));
@@ -58,6 +58,9 @@ int main(int argc,char **argv) { @autoreleasepool {
         NSSegmentedControl *segments=nil;NSTabView *tabs=nil;
         for(NSView *view in panel.subviews){if([view isKindOfClass:NSSegmentedControl.class])segments=(id)view;if([view isKindOfClass:NSTabView.class])tabs=(id)view;}
         assert(segments.segmentCount==3&&tabs.numberOfTabViewItems==3);
+        BOOL currentUserShown=NO;
+        for(NSView *view in tabs.tabViewItems[0].view.subviews)if([view isKindOfClass:NSTextField.class]&&[[(NSTextField *)view stringValue] isEqualToString:@"Current user: Test Player"])currentUserShown=YES;
+        assert(currentUserShown);
         segments.selectedSegment=1;[segments sendAction:segments.action to:segments.target];assert(tabs.selectedTabViewItem==tabs.tabViewItems[1]);
         NSSwitch *fps=nil;
         for(NSView *row in tabs.tabViewItems[0].view.subviews)for(NSView *control in row.subviews)if([control isKindOfClass:NSSwitch.class])fps=(id)control;

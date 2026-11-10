@@ -22,8 +22,8 @@ interpreter, JIT, or emulator backend is used by the port.
   `aa217ae` from <https://github.com/KhronosGroup/SPIRV-Cross> (Apache-2.0).
   Build it in a directory outside this source checkout.
 
-Every required runtime, graphics, rewriting, and shader-service source is local
-to this folder. See [copy provenance](third_party/COPIES.md) and
+The runtime, graphics, rewriting, and shader-service sources are local to this
+folder; the Mac user selector is shared in `games/common`. See [copy provenance](third_party/COPIES.md) and
 [dependency licenses](THIRD_PARTY_NOTICES.md). Builds do not import another
 game's runtime or scripts. The prebuilt shader translator is a necessary native
 build tool, not a game binary; its SHA-256 is checked before use.
@@ -98,6 +98,13 @@ screen with OK enabled after the native field closed. This checks accepting the
 edit, not save persistence across restarts.
 
 The regular app profile is `~/Library/Application Support/MacNativeGames/Tomodachi/profile`.
+Add local users under Settings → Display → Manage Users. The shared user list is
+used by supported MacNativeGames titles. If more than one user exists, choose
+one before the game starts; Settings shows the user for the current session.
+Each Tomodachi user has a separate island and save;
+the existing `Local` user keeps the previous save. Switch users by quitting the
+game and choosing a different user on the next launch. Removed users can be
+restored from the same panel; their game saves are kept.
 The port never reads or modifies an emulator's profile or save automatically.
 Packaged runs keep diagnostics off by default. Set `TOMODACHI_DEBUG_LOG=1` when
 launching the executable to append a native runtime log to that profile.

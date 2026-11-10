@@ -83,6 +83,7 @@ int runtime_users_active(RuntimeUser *out){if(out)*out=(RuntimeUser){0};return 0
 int runtime_users_next(RuntimeUser *out){if(out)*out=(RuntimeUser){0};return 0;}
 int runtime_users_add(const char *name){(void)name;return -1;}
 int runtime_users_choose(int index){(void)index;return -1;}
+void mng_users_manage(void){}
 #ifndef FRONTEND_REAL_GAMEPAD
 int runtime_gamepad_type(int *detected){if(detected)*detected=-1;return 0;}
 #endif

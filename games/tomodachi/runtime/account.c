@@ -24,6 +24,13 @@ uint64_t runtime_account_lock_owner(void){const uint32_t *w=(const uint32_t *)(c
 static uint64_t tokens[64],nextToken=1;
 static void initialize(void){
  lock_acquire();if(local.lo||local.hi){lock_release();return;}
+ const char *chosen=getenv("MNG_USER_ID");
+ if(chosen&&strcmp(chosen,"default")){
+  char half[17],*end;half[16]=0;if(strlen(chosen)!=32)runtime_fail("invalid selected user");
+  memcpy(half,chosen,16);local.hi=strtoull(half,&end,16);if(end!=half+16)runtime_fail("invalid selected user");
+  memcpy(half,chosen+16,16);local.lo=strtoull(half,&end,16);if(end!=half+16||(!local.lo&&!local.hi))runtime_fail("invalid selected user");
+  lock_release();return;
+ }
  const char *dir=getenv("TOTK_PROFILE_DIR");if(!dir)dir="user-data";
  if(mkdir(dir,0700)&&errno!=EEXIST)runtime_fail("create local account directory");
  char path[4096];if(snprintf(path,sizeof(path),"%s/account.uid",dir)>=(int)sizeof(path))runtime_fail("local account path length");
@@ -39,7 +46,7 @@ static unsigned preselected(UserHandle *out){if(!out)runtime_fail("account null 
 static uint32_t user_id(Uid *out,const UserHandle *handle){lock_acquire();bool ok=out&&valid(handle);if(ok)*out=local;lock_release();return ok?0:0x7c67;}
 static void close_user(const UserHandle *handle){lock_acquire();if(!valid(handle))runtime_fail("invalid local account handle close");for(unsigned i=0;i<64;i++)if(tokens[i]==handle->token){tokens[i]=0;break;}lock_release();}
 static uint32_t existence(unsigned char *out,const Uid *uid){if(!out||!uid)return 0x7c67;initialize();*out=same(uid);return 0;}
-static uint32_t nickname(char *out,const Uid *uid){initialize();if(!out||!same(uid))return 0x7c67;memset(out,0,33);memcpy(out,"Local",5);return 0;}
+static uint32_t nickname(char *out,const Uid *uid){initialize();if(!out||!same(uid))return 0x7c67;const char *name=getenv("MNG_USER_NAME");size_t n=name?strnlen(name,33):0;if(!n||n>32){name="Local";n=5;}memset(out,0,33);memcpy(out,name,n);return 0;}
 void runtime_account_uid(uint64_t out[2]){initialize();out[0]=local.lo;out[1]=local.hi;}
 void *runtime_account_override(const char *name){
  static const struct{const char *name;void *fn;} entries[]={

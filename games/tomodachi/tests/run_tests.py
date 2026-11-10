@@ -24,7 +24,7 @@ def main():
             ('clock', ['tests/test_tomodachi_clock.c','runtime/time_host.c'], ['-framework','CoreFoundation']),
             ('gesture', ['tests/test_tomodachi_gesture.c','runtime/gesture.c'], []),
             ('inline-keyboard', ['tests/test_tomodachi_inline_keyboard.c','runtime/inline_keyboard.c'], ['-framework','CoreFoundation']),
-            ('settings', ['tests/test_tomodachi_settings.m','runtime/settings.m'], ['-fobjc-arc','-DDM_NVN_M3=0','-framework','Cocoa','-framework','GameController']),
+            ('settings', ['tests/test_tomodachi_settings.m','runtime/settings.m','../common/users.m'], ['-fobjc-arc','-DDM_NVN_M3=0','-framework','Cocoa','-framework','GameController']),
         ]:
             binary=out/name
             subprocess.run([*common,*sources,*flags,'-o',str(binary)],cwd=TITLE,check=True)
@@ -40,6 +40,7 @@ def main():
                 # Interactive window tests are opt-in on a local desktop.
                 if '--ui' in sys.argv:
                     run([binary,'--ui-smoke'])
+    run([sys.executable, '-B', REPO/'games/common/tests/test_users.py', *(['--ui'] if '--ui' in sys.argv else [])])
 
 if __name__=='__main__':
     main()

@@ -52,6 +52,7 @@ class WorkDirectoryTests(unittest.TestCase):
             self.assertFalse((tree/'extracted').is_symlink())
             self.assertFalse((tree/'tooling').is_symlink())
             self.assertEqual((external/'spirv-cross/keep.txt').read_text(),'shared dependency must survive')
+            self.assertEqual((work/'common/users.m').read_bytes(), (build_app.REPO/'games/common/users.m').read_bytes())
 
     @unittest.skipUnless(shutil.which('rsync'),'rsync needed for real source-copy check')
     def test_changed_source_older_than_the_last_build_is_rebuilt(self):
